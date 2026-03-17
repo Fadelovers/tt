@@ -303,9 +303,12 @@ class Agent1Controller:
         return None
 
     def _get_current_position(self, state: Any, sensor_data: Dict, all_agents: Any) -> Optional[np.ndarray]:
-        import ast
-
+        """
+        Извлекает текущую позицию агента из доступных источников.
+        Возвращает np.ndarray (x, y) в пикселях или None, если позиция не найдена.
+        """
         def try_coerce(p):
+            """Преобразует переданный объект в np.ndarray (x, y), если возможно."""
             try:
                 if p is None:
                     return None
@@ -328,7 +331,7 @@ class Agent1Controller:
         pos_px = None
         source = None
 
-        # --- all_agents ---
+        # 1. Поиск в all_agents
         try:
             if all_agents is not None:
                 if isinstance(all_agents, dict):
@@ -365,7 +368,7 @@ class Agent1Controller:
         except Exception as e:
             self._log(f"Error reading all_agents: {e}")
 
-        # --- state ---
+        # 2. Поиск в state
         if pos_px is None and state is not None:
             try:
                 if isinstance(state, dict):
@@ -391,7 +394,7 @@ class Agent1Controller:
             except Exception as e:
                 self._log(f"Error reading state: {e}")
 
-        # --- sensors ---
+        # 3. Поиск в сенсорных данных
         if pos_px is None:
             try:
                 if isinstance(sensor_data, dict):
@@ -406,96 +409,19 @@ class Agent1Controller:
                                 break
                     if pos_px is None:
                         gps = sensor_data.get("gps") or sensor_data.get("GPS")
-                        gps_c = try_coerce(gps)
-                        if gps_c is not None:
-                            pos_px = gps_c
+                        pos_px = try_coerce(gps)
+                        if pos_px is not None:
                             source = "gps"
             except Exception as e:
                 self._log(f"Error reading sensors: {e}")
 
-        # --- fallback: connections file ---
-        if pos_px is None:
-            try:
-                path = getattr(self, "connections_path", None)
-                if path and os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                    for line in reversed(lines):
-                        s = line.strip()
-                        if not s:
-                            continue
-                        if s.startswith("MSG:"):
-                            payload = s[len("MSG:"):]
-                            try:
-                                msg = ast.literal_eval(payload)
-                                if isinstance(msg, dict):
-                                    data = msg.get("DATA") or {}
-                                    for key in ("position", "pos", "position_estimate", "pos_px"):
-                                        if isinstance(data, dict) and key in data:
-                                            p = try_coerce(data[key])
-                                            if p is not None:
-                                                pos_px = p
-                                                source = f"connections_file[{msg.get('MSG')}]"
-                                                break
-                                    if pos_px is not None:
-                                        break
-                                    if isinstance(data, (list, tuple)) and len(data) >= 2:
-                                        p = try_coerce(data)
-                                        if p is not None:
-                                            pos_px = p
-                                            source = f"connections_file[{msg.get('MSG')}]"
-                                            break
-                                    if msg.get("MSG") and "ALL" in msg.get("MSG"):
-                                        if isinstance(data, list):
-                                            for ent in data:
-                                                if isinstance(ent, dict) and (
-                                                    "id" in ent and str(ent.get("id")) == str(self.my_id)
-                                                ):
-                                                    p = try_coerce(
-                                                        ent.get("pos") or ent.get("position") or
-                                                        ent.get("pos_px") or ent.get("position_estimate")
-                                                    )
-                                                    if p is not None:
-                                                        pos_px = p
-                                                        source = f"connections_file[{msg.get('MSG')}]"
-                                                        break
-                                    if pos_px is not None:
-                                        break
-                            except Exception:
-                                continue
-            except Exception as e:
-                self._log(f"Error parsing connections file for position: {e}")
-
         if pos_px is not None:
-            self._log(f"Got position {pos_px} from {source} (pixels) [extended search]")
+            self._log(f"Got position {pos_px} from {source} (pixels)")
             return pos_px
-        else:
-            try:
-                self._log("Failed to get position from any source (extended). Snapshot:")
-                self._log(f"  all_agents type: {type(all_agents).__name__ if all_agents is not None else 'None'}")
-                if isinstance(all_agents, dict):
-                    try:
-                        self._log(f"  all_agents keys sample: {list(all_agents.keys())[:10]}")
-                    except Exception:
-                        pass
-                elif isinstance(all_agents, (list, tuple)):
-                    self._log(f"  all_agents len: {len(all_agents)}")
-                self._log(f"  state type: {type(state).__name__ if state is not None else 'None'}")
-                self._log(f"  sensor_data keys: {list(sensor_data.keys()) if isinstance(sensor_data, dict) else str(sensor_data)}")
-                try:
-                    path = getattr(self, "connections_path", None)
-                    if path and os.path.exists(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            tail = f.readlines()[-10:]
-                        self._log(f"  connections tail (last {len(tail)} lines):")
-                        for L in tail:
-                            self._log("    " + (L.strip()[:300]))
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            return None
 
+        # Если ничего не нашли
+        self._log("Failed to get position from any source")
+        return None
     def get_control(self, state: Any, sensor_data: Dict[str, Any], all_agents: Any, sim_time: float):
         try:
             self._log(f"get_control called at time {sim_time}")
